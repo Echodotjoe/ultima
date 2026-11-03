@@ -113,8 +113,8 @@
             background-color: var(--accent-color);
         }
     </style>
-    <!-- Dynamic CDN load of the modern Ruffle Flash Player framework -->
-    <script src="https://unpkg.com"></script>
+    <!-- Dynamic CDN load of the Ruffle Flash Player framework -->
+    <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
 </head>
 <body>
 
@@ -125,7 +125,7 @@
 
     <div id="content-area">
         <div id="no-game">Select a game to start playing</div>
-        <!-- Target dynamic runtime container hooks -->
+        <!-- Dynamic target element where games are generated and destroyed -->
         <div id="runtime-container" style="width:100%; height:100%;"></div>
         
         <!-- Controls UI Container -->
@@ -137,14 +137,18 @@
 
     <script>
         // =========================================================================
-        // CONFIGURATION: Add your local paths or external URLs here!
+        // CONFIGURATION: Add your folder paths or direct external URLs here!
         // - Web links starting with http:// or https:// embed automatically.
         // - Folders default to launching HTML5 (looking for folder/index.html).
-        // - Strings ending explicitly in ".swf" launch Ruffle.
+        // - Strings ending explicitly in ".swf" launch Ruffle directly.
         // - Append an asterisk (*) to turn off persistent browser canvas saving.
         // =========================================================================
         const GAMES = [
-            "https://echodotjoes.github.io/geometry-dash/",                 // Local Folder -> HTML5 game
+            "geodash",                 // Local Folder -> HTML5 game
+            "super-mario*",            // Local Folder -> HTML5 game, saving disabled
+            "binding-of-isaac/game.swf",// Local Path -> Direct SWF
+            "https://site.io",         // External Website Link (Embedded)
+            "https://poki.com*",       // External Website Link, saving disabled indicator
         ];
 
         // ==========================================
@@ -172,14 +176,14 @@
             const isSaveDisabled = cleanName.endsWith('*');
             let targetPath = isSaveDisabled ? cleanName.slice(0, -1).trim() : cleanName;
             
-            // Check if it's an external web link or specific type
+            // Check if it's an external web link or local file asset type
             const isWebLink = targetPath.startsWith('http://') || targetPath.startsWith('https://');
             const isSwf = !isWebLink && targetPath.toLowerCase().endsWith('.swf');
             
-            // Format nice display name for the navigation sidebar
+            // Format nice display name for the navigation sidebar buttons
             let displayName = targetPath;
             if (isWebLink) {
-                displayName = targetPath.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
+                displayName = targetPath.replace(/https?:\/\/(www\.)?/, '').split('/');
             } else {
                 displayName = targetPath.split('/').pop().replace('.swf', '');
             }
@@ -204,16 +208,14 @@
                     activeElementRef = null;
                 }
 
-                // INITIALIZE FRESH GAME ELEMENT
+                // INITIALIZE FRESH GAME ELEMENT FROM SCRATCH
                 if (isSwf) {
-                    // Spawn raw fresh Ruffle object context
                     const ruffle = window.RufflePlayer.newest();
                     activeElementRef = ruffle.createPlayer();
                     activeElementRef.className = "game-view";
                     runtimeContainer.appendChild(activeElementRef);
                     activeElementRef.load(targetPath);
                 } else {
-                    // Spawn raw clean web frame context
                     activeElementRef = document.createElement('iframe');
                     activeElementRef.className = "game-view";
                     
@@ -245,7 +247,7 @@
             gameListContainer.appendChild(button);
         });
 
-        // Trigger native Fullscreen mode specifically targeting the dynamically spawned container element
+        // Trigger native Fullscreen mode targeting the generated game window directly
         fsToggle.onclick = () => {
             if (activeElementRef) {
                 if (activeElementRef.requestFullscreen) {
@@ -256,3 +258,14 @@
             }
         };
 
+        // File system persistent background storage initialization helper
+async function initPersistentStorage(gameId) {
+try {
+if (navigator.storage && navigator.storage.getDirectory) {
+const root = await navigator.storage.getDirectory();
+await root.getDirectoryHandle(gameId, { create: true });
+}
+} catch (err) {
+console.warn("Storage profile initialized with fallback constraints.", err);
+}
+}
