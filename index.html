@@ -64,7 +64,7 @@
             background-color: #000;
             position: relative;
         }
-        iframe, #ruffle-container {
+        .game-view {
             width: 100%;
             height: 100%;
             border: none;
@@ -125,8 +125,8 @@
 
     <div id="content-area">
         <div id="no-game">Select a game to start playing</div>
-        <iframe id="game-frame" src="" style="display: none;"></iframe>
-        <div id="ruffle-container" style="display: none;"></div>
+        <!-- Target dynamic runtime container hooks -->
+        <div id="runtime-container" style="width:100%; height:100%;"></div>
         
         <!-- Controls UI Container -->
         <div id="controls-panel" class="controls-overlay" style="display: none;">
@@ -137,32 +137,31 @@
 
     <script>
         // =========================================================================
-        // CONFIGURATION: Add your folder or .swf file paths here!
+        // CONFIGURATION: Add your local paths or external URLs here!
+        // - Web links starting with http:// or https:// embed automatically.
         // - Folders default to launching HTML5 (looking for folder/index.html).
-        // - Strings ending explicitly in ".swf" bypass iframes and launch Ruffle.
+        // - Strings ending explicitly in ".swf" launch Ruffle.
         // - Append an asterisk (*) to turn off persistent browser canvas saving.
         // =========================================================================
         const GAMES = [
-            "geodash",                 // Folder -> HTML5 game
-            "super-mario*",            // Folder -> HTML5 game, saving disabled
-            "binding-of-isaac/game.swf",// Path -> Direct SWF, saving enabled
-            "fancy-pants.swf*",        // Path -> Direct SWF, saving disabled
-            "doom_classic"
+            "geodash",                 // Local Folder -> HTML5 game
+            "super-mario*",            // Local Folder -> HTML5 game, saving disabled
+            "binding-of-isaac/game.swf",// Local Path -> Direct SWF
+            "https://site.io",         // External Website Link (Embedded)
+            "https://poki.com*",       // External Website Link, saving disabled indicator
         ];
 
         // ==========================================
         // CORE ENGINE LOGIC
         // ==========================================
         const gameListContainer = document.getElementById('game-list');
-        const gameFrame = document.getElementById('game-frame');
-        const ruffleContainer = document.getElementById('ruffle-container');
+        const runtimeContainer = document.getElementById('runtime-container');
         const noGamePlaceholder = document.getElementById('no-game');
         const controlsPanel = document.getElementById('controls-panel');
         const statusTag = document.getElementById('status-tag');
         const fsToggle = document.getElementById('fs-toggle');
         
-        let activeRufflePlayer = null;
-        let currentMode = null; // Keeps track of "html5" or "swf"
+        let activeElementRef = null;
 
         // Configure Global Ruffle settings
         window.RufflePlayer = window.RufflePlayer || {};
@@ -177,8 +176,18 @@
             const isSaveDisabled = cleanName.endsWith('*');
             let targetPath = isSaveDisabled ? cleanName.slice(0, -1).trim() : cleanName;
             
-            const isSwf = targetPath.toLowerCase().endsWith('.swf');
-            const displayName = targetPath.split('/').pop().replace('.swf', '').replace(/[-_]/g, ' ');
+            // Check if it's an external web link or specific type
+            const isWebLink = targetPath.startsWith('http://') || targetPath.startsWith('https://');
+            const isSwf = !isWebLink && targetPath.toLowerCase().endsWith('.swf');
+            
+            // Format nice display name for the navigation sidebar
+            let displayName = targetPath;
+            if (isWebLink) {
+                displayName = targetPath.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
+            } else {
+                displayName = targetPath.split('/').pop().replace('.swf', '');
+            }
+            displayName = displayName.replace(/[-_]/g, ' ');
 
             const button = document.createElement('button');
             button.className = 'game-btn';
@@ -190,38 +199,49 @@
                 noGamePlaceholder.style.display = 'none';
                 controlsPanel.style.display = 'flex';
 
-                if (activeRufflePlayer) {
-                    activeRufflePlayer.remove();
-                    activeRufflePlayer = null;
+                // PURGE PREVIOUS GAME FROM RAM COMPLETELY
+                if (activeElementRef) {
+                    if (typeof activeElementRef.remove === 'function') {
+                        activeElementRef.remove();
+                    }
+                    runtimeContainer.innerHTML = '';
+                    activeElementRef = null;
                 }
 
+                // INITIALIZE FRESH GAME ELEMENT
                 if (isSwf) {
-                    currentMode = 'swf';
-                    gameFrame.style.display = 'none';
-                    gameFrame.src = "";
-                    ruffleContainer.style.display = 'block';
-                    
+                    // Spawn raw fresh Ruffle object context
                     const ruffle = window.RufflePlayer.newest();
-                    activeRufflePlayer = ruffle.createPlayer();
-                    ruffleContainer.appendChild(activeRufflePlayer);
-                    activeRufflePlayer.load(targetPath);
+                    activeElementRef = ruffle.createPlayer();
+                    activeElementRef.className = "game-view";
+                    runtimeContainer.appendChild(activeElementRef);
+                    activeElementRef.load(targetPath);
                 } else {
-                    currentMode = 'html5';
-                    ruffleContainer.style.display = 'none';
-                    gameFrame.style.display = 'block';
-                    gameFrame.src = `./${targetPath}/index.html`;
+                    // Spawn raw clean web frame context
+                    activeElementRef = document.createElement('iframe');
+                    activeElementRef.className = "game-view";
+                    
+                    if (isWebLink) {
+                        activeElementRef.src = targetPath;
+                    } else {
+                        activeElementRef.src = `./${targetPath}/index.html`;
+                    }
+                    
+                    if (isSaveDisabled) {
+                        activeElementRef.removeAttribute('sandbox');
+                    } else {
+                        activeElementRef.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-pointer-lock');
+                    }
+                    runtimeContainer.appendChild(activeElementRef);
                 }
 
+                // Handle system UI text updates
                 if (isSaveDisabled) {
-                    gameFrame.removeAttribute('sandbox');
                     statusTag.textContent = "💾 Saving: DISABLED";
                     statusTag.className = "save-indicator save-disabled";
                 } else {
-                    // allow-modals added for alert windows, allow-pointer-lock for FPS mouse tracking
-                    gameFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-pointer-lock');
                     statusTag.textContent = "💾 Saving: ENABLED (Persistent)";
                     statusTag.className = "save-indicator";
-                    
                     initPersistentStorage(displayName.replace(/\s+/g, '_'));
                 }
             };
@@ -229,31 +249,14 @@
             gameListContainer.appendChild(button);
         });
 
-        // Trigger native Fullscreen mode specifically targeting the active container element
+        // Trigger native Fullscreen mode specifically targeting the dynamically spawned container element
         fsToggle.onclick = () => {
-            const targetElement = (currentMode === 'swf') ? ruffleContainer : gameFrame;
-
-            if (targetElement) {
-                if (targetElement.requestFullscreen) {
-                    targetElement.requestFullscreen();
-                } else if (targetElement.webkitRequestFullscreen) { /* Safari support */
-                    targetElement.webkitRequestFullscreen();
-                } else if (targetElement.msRequestFullscreen) { /* IE11 support */
-                    targetElement.msRequestFullscreen();
+            if (activeElementRef) {
+                if (activeElementRef.requestFullscreen) {
+                    activeElementRef.requestFullscreen();
+                } else if (activeElementRef.webkitRequestFullscreen) {
+                    activeElementRef.webkitRequestFullscreen();
                 }
             }
         };
 
-        async function initPersistentStorage(gameId) {
-            try {
-                if (navigator.storage && navigator.storage.getDirectory) {
-                    const root = await navigator.storage.getDirectory();
-                    await root.getDirectoryHandle(gameId, { create: true });
-                }
-            } catch (err) {
-                console.warn("Storage runtime error:", err);
-            }
-        }
-    </script>
-</body>
-</html>
