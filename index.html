@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-color: #1e1e1e;
+            --text-color: #ffffff;
+            --accent-color: #ff4757;
+        }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+        }
+        #sidebar {
+            width: 250px;
+            background-color: var(--panel-color);
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 10px;
+            box-sizing: border-box;
+        }
+        #sidebar h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+        }
+        .game-btn {
+            background: none;
+            border: none;
+            color: #aaa;
+            text-align: left;
+            padding: 12px 15px;
+            font-size: 1rem;
+            cursor: pointer;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            transition: all 0.2s ease;
+        }
+        .game-btn:hover {
+            background-color: #2a2a2a;
+            color: #fff;
+        }
+        .game-btn.active {
+            background-color: var(--accent-color);
+            color: #fff;
+            font-weight: bold;
+        }
+        #content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #000;
+            position: relative;
+        }
+        iframe, #ruffle-container {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        #no-game {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            color: #555;
+            font-size: 1.5rem;
+        }
+        .save-indicator {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: #00ff00;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .save-disabled {
+            color: #ff4757;
+        }
+    </style>
+    <!-- Dynamic CDN load of the modern Ruffle Flash Player framework -->
+    <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>My Games</h2>
+        <div id="game-list"></div>
+    </div>
+
+    <div id="content-area">
+        <div id="no-game">Select a game to start playing</div>
+        <iframe id="game-frame" src="" style="display: none;"></iframe>
+        <div id="ruffle-container" style="display: none;"></div>
+        <div id="status-tag" class="save-indicator" style="display: none;"></div>
+    </div>
+
+    <script>
+        // =========================================================================
+        // CONFIGURATION: Add your folder or .swf file paths here!
+        // - Folders default to launching HTML5 (looking for folder/index.html).
+        // - Strings ending explicitly in ".swf" bypass iframes and launch Ruffle.
+        // - Append an asterisk (*) to turn off persistent browser canvas saving.
+        // =========================================================================
+        const GAMES = [
+            "geodash",                 // Folder -> HTML5 game
+            "super-mario*",            // Folder -> HTML5 game, saving disabled
+            "binding-of-isaac/game.swf",// Path -> Direct SWF, saving enabled
+            "fancy-pants.swf*",        // Path -> Direct SWF, saving disabled
+            "doom_classic"
+        ];
+
+        // ==========================================
+        // CORE ENGINE LOGIC
+        // ==========================================
+        const gameListContainer = document.getElementById('game-list');
+        const gameFrame = document.getElementById('game-frame');
+        const ruffleContainer = document.getElementById('ruffle-container');
+        const noGamePlaceholder = document.getElementById('no-game');
+        const statusTag = document.getElementById('status-tag');
+        
+        let activeRufflePlayer = null;
+
+        // Configure Global Ruffle settings
+        window.RufflePlayer = window.RufflePlayer || {};
+        window.RufflePlayer.config = {
+            "autoplay": "on",
+            "unmuteOverlay": "hidden",
+            "letterbox": "on"
+        };
+
+        GAMES.forEach(gameEntry => {
+            const cleanName = gameEntry.trim();
+            const isSaveDisabled = cleanName.endsWith('*');
+            let targetPath = isSaveDisabled ? cleanName.slice(0, -1).trim() : cleanName;
+            
+            const isSwf = targetPath.toLowerCase().endsWith('.swf');
+
+            // Generate clean button text from file path/folder structure
+            const displayName = targetPath.split('/').pop().replace('.swf', '').replace(/[-_]/g, ' ');
+
+            const button = document.createElement('button');
+            button.className = 'game-btn';
+            button.textContent = displayName; 
+            
+            button.onclick = () => {
+                // UI cleanup and active highlighting
+                document.querySelectorAll('.game-btn').forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                noGamePlaceholder.style.display = 'none';
+
+                // Stop any running SWF instances before spawning a new one
+                if (activeRufflePlayer) {
+                    activeRufflePlayer.remove();
+                    activeRufflePlayer = null;
+                }
+
+                // Handle system layout swapping based on format rules
+                if (isSwf) {
+                    gameFrame.style.display = 'none';
+                    gameFrame.src = "";
+                    ruffleContainer.style.display = 'block';
+                    
+                    // Instantiate a direct Ruffle window object layer
+                    const ruffle = window.RufflePlayer.newest();
+                    activeRufflePlayer = ruffle.createPlayer();
+                    ruffleContainer.appendChild(activeRufflePlayer);
+                    
+                    // Fire the source target execution
+                    activeRufflePlayer.load(targetPath);
+                } else {
+                    ruffleContainer.style.display = 'none';
+                    gameFrame.style.display = 'block';
+                    gameFrame.src = `./${targetPath}/index.html`;
+                }
+
+                // Manage permissions & dashboard status tracking
+                if (isSaveDisabled) {
+                    gameFrame.removeAttribute('sandbox');
+                    statusTag.textContent = "💾 Saving: DISABLED";
+                    statusTag.className = "save-indicator save-disabled";
+                    statusTag.style.display = 'block';
+                } else {
+                    gameFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+                    statusTag.textContent = "💾 Saving: ENABLED (Persistent)";
+                    statusTag.className = "save-indicator";
+                    statusTag.style.display = 'block';
+                    
+                    // Unique persistent database handle initialization
+                    initPersistentStorage(displayName.replace(/\s+/g, '_'));
+                }
+            };
+
+            gameListContainer.appendChild(button);
+        });
+
+        async function initPersistentStorage(gameId) {
+            try {
+                if (navigator.storage && navigator.storage.getDirectory) {
+                    const root = await navigator.storage.getDirectory();
+                    await root.getDirectoryHandle(gameId, { create: true });
+                }
+            } catch (err) {
+                console.warn("Storage fallback layer engaged:", err);
+            }
+        }
+    </script>
+</body>
+</html>
