@@ -18,6 +18,7 @@
             margin: 0;
             display: flex;
             height: 100vh;
+            overflow: hidden;
         }
         #sidebar {
             width: 250px;
@@ -76,24 +77,44 @@
             color: #555;
             font-size: 1.5rem;
         }
-        .save-indicator {
+        .controls-overlay {
             position: absolute;
             bottom: 10px;
             right: 10px;
-            background: rgba(0,0,0,0.7);
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            color: #00ff00;
-            pointer-events: none;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            pointer-events: auto;
             z-index: 10;
+        }
+        .save-indicator {
+            background: rgba(0,0,0,0.85);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #00ff00;
+            border: 1px solid #333;
         }
         .save-disabled {
             color: #ff4757;
         }
+        .fullscreen-btn {
+            background-color: #2f3542;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .fullscreen-btn:hover {
+            background-color: var(--accent-color);
+        }
     </style>
     <!-- Dynamic CDN load of the modern Ruffle Flash Player framework -->
-    <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+    <script src="https://unpkg.com"></script>
 </head>
 <body>
 
@@ -106,7 +127,12 @@
         <div id="no-game">Select a game to start playing</div>
         <iframe id="game-frame" src="" style="display: none;"></iframe>
         <div id="ruffle-container" style="display: none;"></div>
-        <div id="status-tag" class="save-indicator" style="display: none;"></div>
+        
+        <!-- Controls UI Container -->
+        <div id="controls-panel" class="controls-overlay" style="display: none;">
+            <div id="status-tag" class="save-indicator"></div>
+            <button id="fs-toggle" class="fullscreen-btn">🖥️ Fullscreen</button>
+        </div>
     </div>
 
     <script>
@@ -117,7 +143,11 @@
         // - Append an asterisk (*) to turn off persistent browser canvas saving.
         // =========================================================================
         const GAMES = [
-            "geodash*",                 // Folder -> HTML5 game   
+            "geodash",                 // Folder -> HTML5 game
+            "super-mario*",            // Folder -> HTML5 game, saving disabled
+            "binding-of-isaac/game.swf",// Path -> Direct SWF, saving enabled
+            "fancy-pants.swf*",        // Path -> Direct SWF, saving disabled
+            "doom_classic"
         ];
 
         // ==========================================
@@ -127,9 +157,12 @@
         const gameFrame = document.getElementById('game-frame');
         const ruffleContainer = document.getElementById('ruffle-container');
         const noGamePlaceholder = document.getElementById('no-game');
+        const controlsPanel = document.getElementById('controls-panel');
         const statusTag = document.getElementById('status-tag');
+        const fsToggle = document.getElementById('fs-toggle');
         
         let activeRufflePlayer = null;
+        let currentMode = null; // Keeps track of "html5" or "swf"
 
         // Configure Global Ruffle settings
         window.RufflePlayer = window.RufflePlayer || {};
@@ -145,8 +178,6 @@
             let targetPath = isSaveDisabled ? cleanName.slice(0, -1).trim() : cleanName;
             
             const isSwf = targetPath.toLowerCase().endsWith('.swf');
-
-            // Generate clean button text from file path/folder structure
             const displayName = targetPath.split('/').pop().replace('.swf', '').replace(/[-_]/g, ' ');
 
             const button = document.createElement('button');
@@ -154,55 +185,64 @@
             button.textContent = displayName; 
             
             button.onclick = () => {
-                // UI cleanup and active highlighting
                 document.querySelectorAll('.game-btn').forEach(btn => btn.classList.remove('active'));
                 button.classList.add('active');
                 noGamePlaceholder.style.display = 'none';
+                controlsPanel.style.display = 'flex';
 
-                // Stop any running SWF instances before spawning a new one
                 if (activeRufflePlayer) {
                     activeRufflePlayer.remove();
                     activeRufflePlayer = null;
                 }
 
-                // Handle system layout swapping based on format rules
                 if (isSwf) {
+                    currentMode = 'swf';
                     gameFrame.style.display = 'none';
                     gameFrame.src = "";
                     ruffleContainer.style.display = 'block';
                     
-                    // Instantiate a direct Ruffle window object layer
                     const ruffle = window.RufflePlayer.newest();
                     activeRufflePlayer = ruffle.createPlayer();
                     ruffleContainer.appendChild(activeRufflePlayer);
-                    
-                    // Fire the source target execution
                     activeRufflePlayer.load(targetPath);
                 } else {
+                    currentMode = 'html5';
                     ruffleContainer.style.display = 'none';
                     gameFrame.style.display = 'block';
                     gameFrame.src = `./${targetPath}/index.html`;
                 }
 
-                // Manage permissions & dashboard status tracking
                 if (isSaveDisabled) {
                     gameFrame.removeAttribute('sandbox');
                     statusTag.textContent = "💾 Saving: DISABLED";
                     statusTag.className = "save-indicator save-disabled";
-                    statusTag.style.display = 'block';
                 } else {
-                    gameFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+                    // allow-modals added for alert windows, allow-pointer-lock for FPS mouse tracking
+                    gameFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-pointer-lock');
                     statusTag.textContent = "💾 Saving: ENABLED (Persistent)";
                     statusTag.className = "save-indicator";
-                    statusTag.style.display = 'block';
                     
-                    // Unique persistent database handle initialization
                     initPersistentStorage(displayName.replace(/\s+/g, '_'));
                 }
             };
 
             gameListContainer.appendChild(button);
         });
+
+        // Trigger native Fullscreen mode specifically targeting the active container element
+        fsToggle.onclick = () => {
+            const targetElement = (currentMode === 'swf') ? ruffleContainer : gameFrame;
+
+            if (targetElement) {
+                if (targetElement.requestFullscreen) {
+                    targetElement.requestFullscreen();
+                } else if (targetElement.webkitRequestFullscreen) { /* Safari support */
+                    targetElement.webkitRequestFullscreen();
+                } else if (targetElement.msRequestFullscreen) { /* IE11 support */
+                    targetElement.msRequestFullscreen();
+                }
+            }
+        };
 
         async function initPersistentStorage(gameId) {
             try {
@@ -211,7 +251,7 @@
                     await root.getDirectoryHandle(gameId, { create: true });
                 }
             } catch (err) {
-                console.warn("Storage fallback layer engaged:", err);
+                console.warn("Storage runtime error:", err);
             }
         }
     </script>
